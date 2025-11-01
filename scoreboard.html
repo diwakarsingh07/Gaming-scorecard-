@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Free Fire Scoreboard</title>
+<!-- html2canvas from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+  :root{
+    --accent:#6930c3;
+    --panel-bg: rgba(255,255,255,0.9);
+    --text:#111;
+  }
+  body{
+    margin:0;
+    font-family: "Segoe UI", Roboto, Arial;
+    background:#111;
+    color:var(--text);
+    display:flex;
+    min-height:100vh;
+    align-items:flex-start;
+    justify-content:center;
+    padding:20px;
+  }
+  .board-wrap{
+    width:100%;
+    max-width:1100px;
+    background:linear-gradient(180deg, rgba(0,0,0,0.6), rgba(0,0,0,0.6));
+    border-radius:12px;
+    padding:18px;
+    position:relative;
+    box-shadow:0 10px 30px rgba(0,0,0,0.6);
+  }
+  .bg-image{
+    position:absolute; inset:0; background-position:center; background-size:cover; opacity:0.14; border-radius:12px; pointer-events:none;
+  }
+  header{ display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+  header h1{ margin:0; color:white; font-size:28px; text-shadow:0 2px 8px rgba(0,0,0,0.6) }
+  .controls{ margin-left:auto; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  button, input[type=file], select{ padding:8px 10px; border-radius:8px; border:none; background:var(--panel-bg); cursor:pointer; }
+  table{
+    width:100%;
+    border-collapse:collapse;
+    background:rgba(255,255,255,0.95);
+    border-radius:6px;
+    overflow:hidden;
+  }
+  th, td{
+    padding:8px 10px;
+    border-bottom:1px solid rgba(0,0,0,0.06);
+    text-align:center;
+  }
+  th{ background:var(--accent); color:white; font-weight:700; }
+  td[contenteditable]{ background:transparent; min-width:55px; }
+  .small{ font-size:12px; padding:6px; }
+  .actions{ display:flex; gap:8px; margin-top:12px; }
+  .flex-row{ display:flex; gap:8px; align-items:center; }
+  @media (max-width:720px){
+    header h1{ font-size:20px; }
+    .controls{ width:100%; justify-content:space-between; margin-top:8px; }
+    .board-wrap{ padding:12px; }
+  }
+</style>
+</head>
+<body>
+<div class="board-wrap" id="board">
+  <div class="bg-image" id="bg"></div>
+  <header>
+    <img src="" id="logo" alt="" style="width:68px;height:68px;border-radius:8px;object-fit:cover;display:none;">
+    <h1>VOLCANO ESPORTS — COMMUNITY CUP</h1>
+    <div class="controls">
+      <label class="flex-row small">Background <input type="file" id="bgUpload" accept="image/*"></label>
+      <label class="flex-row small">Logo <input type="file" id="logoUpload" accept="image/*"></label>
+      <button id="addRow">+ Add Team</button>
+      <button id="exportPNG">Export PNG</button>
+      <button id="reset">Reset</button>
+    </div>
+  </header>
+
+  <div style="overflow:auto; border-radius:6px;">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Team name</th>
+          <th>Match</th>
+          <th>Booyah</th>
+          <th>P.P.</th>
+          <th>K.P.</th>
+          <th>Total P.</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="actions">
+    <button id="downloadCSV">Download CSV</button>
+    <button id="loadExample">Load Example</button>
+    <div style="margin-left:auto; color:rgba(255,255,255,0.7); font-size:13px;">Tap cells to edit. Totals & rank auto-calc.</div>
+  </div>
+</div>
+
+<script>
+const tbody = document.getElementById('tbody');
+
+function makeRow(data = {}){
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td class="rank">-</td>
+    <td contenteditable="true" class="team">${data.team||'Team name'}</td>
+    <td contenteditable="true" class="match">${data.match ?? 0}</td>
+    <td contenteditable="true" class="booyah">${data.booyah ?? 0}</td>
+    <td contenteditable="true" class="pp">${data.pp ?? 0}</td>
+    <td contenteditable="true" class="kp">${data.kp ?? 0}</td>
+    <td class="total">0</td>
+    <td><button class="del">Delete</button></td>
+  `;
+  // attach listeners to recalc
+  ['match','booyah','pp','kp','team'].forEach(cls=>{
+    tr.querySelector('.'+cls).addEventListener('input', recalcAll);
+  });
+  tr.querySelector('.del').addEventListener('click', ()=>{ tr.remove(); recalcAll(); });
+  return tr;
+}
+
+function recalcAll(){
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  // compute totals
+  const arr = rows.map(r=>{
+    const team = r.querySelector('.team').innerText.trim();
+    const match = Number(r.querySelector('.match').innerText)||0;
+    const booyah = Number(r.querySelector('.booyah').innerText)||0;
+    const pp = Number(r.querySelector('.pp').innerText)||0;
+    const kp = Number(r.querySelector('.kp').innerText)||0;
+    const total = pp + kp + (booyah*8); // example: booyah extra points, adjust if you want
+    r.querySelector('.total').innerText = total;
+    return {r, team, match, booyah, pp, kp, total};
+  });
+
+  // sort by total desc then kp desc then pp desc
+  arr.sort((a,b)=> b.total - a.total || b.kp - a.kp || b.pp - a.pp);
+
+  // assign ranks (ties same rank)
+  let last = null, rank = 0, seen = 0;
+  arr.forEach((it,i)=>{
+    seen++;
+    if(!last || it.total !== last.total || it.kp !== last.kp || it.pp !== last.pp) {
+      rank = seen;
+    }
+    it.r.querySelector('.rank').innerText = rank;
+    last = it;
+  });
+}
+
+document.getElementById('addRow').addEventListener('click', ()=>{
+  tbody.appendChild(makeRow());
+  recalcAll();
+});
+
+document.getElementById('loadExample').addEventListener('click', ()=>{
+  tbody.innerHTML='';
+  const example = [
+    {team:'Telugu esports', match:6, booyah:3, pp:64, kp:46},
+    {team:'Tech esports', match:6, booyah:1, pp:57, kp:39},
+    {team:'Not human', match:6, booyah:2, pp:47, kp:41},
+    {team:'South esports', match:6, booyah:0, pp:34, kp:40},
+  ];
+  example.forEach(e => tbody.appendChild(makeRow(e)));
+  recalcAll();
+});
+
+document.getElementById('reset').addEventListener('click', ()=>{
+  tbody.innerHTML='';
+  recalcAll();
+  document.getElementById('bg').style.backgroundImage='';
+  document.getElementById('logo').style.display='none';
+});
+
+document.getElementById('bgUpload').addEventListener('change', (ev)=>{
+  const f = ev.target.files[0];
+  if(!f) return;
+  const url = URL.createObjectURL(f);
+  document.getElementById('bg').style.backgroundImage = `url(${url})`;
+});
+
+document.getElementById('logoUpload').addEventListener('change', (ev)=>{
+  const f = ev.target.files[0];
+  if(!f) return;
+  const url = URL.createObjectURL(f);
+  const logo = document.getElementById('logo');
+  logo.src = url; logo.style.display='block';
+});
+
+// CSV export
+document.getElementById('downloadCSV').addEventListener('click', ()=>{
+  const rows = Array.from(tbody.querySelectorAll('tr')).map(tr=>{
+    return Array.from(tr.querySelectorAll('td')).slice(0,7).map(td=>td.innerText.replace(/\n/g,' '));
+  });
+  const header = ['Rank','Team name','Match','Booyah','P.P.','K.P.','Total P.'];
+  const csv = [header, ...rows].map(r=> r.map(cell => '"'+String(cell).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download='scoreboard.csv'; a.click();
+});
+
+// Export PNG
+document.getElementById('exportPNG').addEventListener('click', ()=>{
+  const el = document.getElementById('board');
+  // temporarily remove controls to make clean
+  const controls = document.querySelectorAll('.controls, .actions, #downloadCSV');
+  controls.forEach(c=>c.style.visibility='hidden');
+  html2canvas(el, {scale:2, useCORS:true}).then(canvas=>{
+    controls.forEach(c=>c.style.visibility='');
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = 'scoreboard.png';
+    a.click();
+  }).catch(err=>{
+    controls.forEach(c=>c.style.visibility='');
+    alert('Export failed: '+err);
+  });
+});
+
+// initial example
+document.getElementById('loadExample').click();
+</script>
+</body>
+</html>
